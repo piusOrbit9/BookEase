@@ -1,0 +1,14 @@
+import {Router} from 'express';import {z} from 'zod';import Booking from '../models/Booking.js';
+const router=Router();
+const services=[{name:'Discovery Call',duration:30,price:'Free',description:'Talk through your idea and goals.'},{name:'Website Consultation',duration:60,price:'₹999',description:'A focused session on scope, UX and delivery.'},{name:'Support Session',duration:30,price:'₹499',description:'Troubleshoot or plan your next iteration.'}];
+router.get('/services',(req,res)=>res.json({items:services}));
+router.get('/slots',(req,res)=>{const day=String(req.query.date||'');if(!/^\d{4}-\d{2}-\d{2}$/.test(day))return res.status(400).json({message:'Choose a valid date in YYYY-MM-DD format'});const items=[];for(let h=9;h<17;h++){for(const m of [0,30]){const d=new Date(`${day}T${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:00`);if(d.getTime()>Date.now())items.push(d.toISOString())}}res.json({items})});
+router.get('/',async(req,res,next)=>{try{const items=await Booking.find().sort({startsAt:1}).limit(200);res.json({items})}catch(e){next(e)}});
+const schema=z.object({customerName:z.string().trim().min(2).max(100),email:z.string().trim().email().max(160),phone:z.string().trim().max(30).optional().default(''),service:z.enum(['Discovery Call','Website Consultation','Support Session']),startsAt:z.string().datetime({offset:true}),notes:z.string().trim().max(1000).optional().default('')});
+router.post('/',async(req,res,next)=>{try{const d=schema.parse(req.body);const service=services.find(s=>s.name===d.service);const start=new Date(d.startsAt);if(start<=new Date())return res.status(400).json({message:'Choose a future appointment time'});const end=new Date(start.getTime()+service.duration*60000);
+const overlaps=await Booking.findOne({status:'Confirmed',startsAt:{$lt:end},$expr:{$gt:[{$add:['$startsAt',{$multiply:['$durationMinutes',60000]}]},start]}});
+if(overlaps)return res.status(409).json({message:'That time is no longer available. Please choose another slot.'});
+const item=await Booking.create({...d,startsAt:start,durationMinutes:service.duration});res.status(201).json({item});
+}catch(e){next(e)}});
+router.patch('/:id/cancel',async(req,res,next)=>{try{const item=await Booking.findByIdAndUpdate(req.params.id,{status:'Cancelled'},{new:true});if(!item)return res.status(404).json({message:'Booking not found'});res.json({item})}catch(e){next(e)}});
+export default router;
